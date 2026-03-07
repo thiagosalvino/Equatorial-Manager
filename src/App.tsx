@@ -55,18 +55,24 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      // First, check if the server is actually responding to API calls
-      // Use cache-buster to ensure we're not getting a cached 404/503
+      // Robust health check
       const pingRes = await fetch(`/api/ping?t=${Date.now()}`);
-      if (!pingRes.ok) {
-        throw new Error(`O servidor não está respondendo corretamente (Ping falhou: ${pingRes.status}).`);
+      const pingContentType = pingRes.headers.get("content-type");
+      
+      if (!pingRes.ok || !pingContentType || !pingContentType.includes("application/json")) {
+        if (retryCount < 2) {
+          console.log(`Server warming up (Ping: ${pingRes.status}), retrying in 2s...`);
+          await new Promise(r => setTimeout(r, 2000));
+          return fetchInvoices(retryCount + 1);
+        }
+        throw new Error(`O servidor não está pronto (Status: ${pingRes.status}). Se você acabou de fazer deploy, aguarde 30 segundos.`);
       }
 
       const response = await fetch(`/api/invoices?t=${Date.now()}`);
       const contentType = response.headers.get("content-type");
       
       if (!response.ok) {
-        let errorMessage = `Erro do servidor: ${response.status}`;
+        let errorMessage = `Erro ${response.status}`;
         if (contentType && contentType.includes("application/json")) {
           const errData = await response.json();
           errorMessage = errData.error || errorMessage;
@@ -75,20 +81,14 @@ export default function App() {
       }
 
       if (!contentType || !contentType.includes("application/json")) {
-        // If we get HTML, maybe the server is still starting. Retry once after 2 seconds.
-        if (retryCount < 1) {
-          console.log("Got HTML instead of JSON, retrying in 2s...");
-          await new Promise(r => setTimeout(r, 2000));
-          return fetchInvoices(retryCount + 1);
-        }
-        throw new Error("O servidor retornou uma resposta inválida (HTML em vez de JSON). Isso acontece quando o servidor falha ao iniciar ou a rota não é encontrada. Por favor, clique no botão 'Recarregar' abaixo.");
+        throw new Error("Resposta inválida do servidor (HTML). Verifique se a URL da API está correta.");
       }
       
       const data = await response.json();
       setInvoices(data);
     } catch (err: any) {
       console.error("Fetch error:", err);
-      setError('Falha ao carregar faturas: ' + err.message);
+      setError(err.message);
     } finally {
       setLoading(false);
     }
