@@ -126,7 +126,7 @@ async function startServer() {
       const ai = new GoogleGenAI({ apiKey });
       const base64Data = req.file.buffer.toString("base64");
 
-      const modelNames = ["gemini-3-flash-preview", "gemini-2.0-flash-exp", "gemini-1.5-flash"];
+      const modelNames = ["gemini-3-flash-preview", "gemini-3.1-flash-lite-preview"];
       let response;
       let lastError;
 
@@ -180,11 +180,16 @@ async function startServer() {
           });
           if (response) break;
         } catch (err: any) {
-          console.error(`Model ${modelName} failed:`, err.message);
+          console.error(`Model ${modelName} failed:`, err.message || err);
           lastError = err;
-          // If it's a rate limit (429) or model not found (404), try the next model
-          if (err.message.includes("429") || err.message.includes("404")) {
-            console.log(`Model ${modelName} rate limited or not found, trying next...`);
+          
+          // Check if it's a rate limit or model not found error
+          const errorStr = JSON.stringify(err).toLowerCase();
+          const isRateLimit = errorStr.includes("429") || errorStr.includes("quota");
+          const isNotFound = errorStr.includes("404") || errorStr.includes("not_found");
+          
+          if (isRateLimit || isNotFound) {
+            console.log(`Model ${modelName} issue (Rate Limit/Not Found), trying next...`);
             continue;
           }
           throw err;
