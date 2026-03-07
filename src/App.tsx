@@ -49,6 +49,7 @@ export default function App() {
   const [uploading, setUploading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
+  const [invoiceToDelete, setInvoiceToDelete] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const fetchInvoices = async (retryCount = 0) => {
@@ -143,13 +144,16 @@ export default function App() {
   });
 
   const deleteInvoice = async (id: number) => {
-    if (!confirm('Tem certeza que deseja excluir esta fatura?')) return;
     try {
-      await fetch('/api/invoices/' + id, { method: 'DELETE' });
+      const response = await fetch('/api/invoices/' + id, { method: 'DELETE' });
+      if (!response.ok) throw new Error('Falha ao excluir fatura');
+      
       setInvoices(invoices.filter(inv => inv.id !== id));
       if (selectedInvoice?.id === id) setSelectedInvoice(null);
+      setInvoiceToDelete(null);
     } catch (err) {
       setError('Erro ao excluir fatura.');
+      setInvoiceToDelete(null);
     }
   };
 
@@ -319,7 +323,7 @@ export default function App() {
                           <p className="text-[10px] text-slate-400 uppercase font-bold">Vence em {invoice.due_date}</p>
                         </div>
                         <button 
-                          onClick={(e) => { e.stopPropagation(); deleteInvoice(invoice.id); }}
+                          onClick={(e) => { e.stopPropagation(); setInvoiceToDelete(invoice.id); }}
                           className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
                         >
                           <Trash2 className="w-4 h-4" />
@@ -481,6 +485,45 @@ export default function App() {
           <p className="text-xs text-slate-400">© 2024 Sistema de Gestão de Faturas Inteligente</p>
         </div>
       </footer>
+
+      {/* Confirmation Modal */}
+      <AnimatePresence>
+        {invoiceToDelete && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 overflow-hidden"
+            >
+              <div className="flex items-center gap-4 mb-6">
+                <div className="bg-red-100 p-3 rounded-full">
+                  <Trash2 className="w-6 h-6 text-red-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-800">Excluir Fatura?</h3>
+                  <p className="text-sm text-slate-500">Esta ação não pode ser desfeita.</p>
+                </div>
+              </div>
+              
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setInvoiceToDelete(null)}
+                  className="flex-1 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-semibold transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  onClick={() => deleteInvoice(invoiceToDelete)}
+                  className="flex-1 px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-xl font-semibold shadow-lg shadow-red-500/20 transition-colors"
+                >
+                  Excluir
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
