@@ -20,7 +20,21 @@ process.on("uncaughtException", (err) => {
 
 let db: any;
 try {
-  db = new Database("invoices.db");
+  const dbPath = process.env.DATABASE_URL || "invoices.db";
+  const dbDir = path.dirname(dbPath);
+
+  // Ensure the directory exists if it's not the current one
+  if (dbDir !== "." && !fs.existsSync(dbDir)) {
+    try {
+      fs.mkdirSync(dbDir, { recursive: true });
+      console.log(`Created database directory: ${dbDir}`);
+    } catch (err) {
+      console.error(`Failed to create database directory ${dbDir}:`, err);
+    }
+  }
+
+  console.log(`Initializing database at: ${dbPath}`);
+  db = new Database(dbPath);
   // Initialize DB
   db.exec(`
     CREATE TABLE IF NOT EXISTS invoices (
