@@ -182,8 +182,12 @@ async function startServer() {
         } catch (err: any) {
           console.error(`Model ${modelName} failed:`, err.message);
           lastError = err;
-          if (err.message.includes("404")) continue;
-          throw err; // If it's not a 404 (like a 429 or 503), we might want to stop or handle differently
+          // If it's a rate limit (429) or model not found (404), try the next model
+          if (err.message.includes("429") || err.message.includes("404")) {
+            console.log(`Model ${modelName} rate limited or not found, trying next...`);
+            continue;
+          }
+          throw err;
         }
       }
 
