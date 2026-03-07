@@ -120,6 +120,10 @@ export default function App() {
         if (contentType && contentType.includes("application/json")) {
           const errData = await response.json();
           errorMessage = errData.error || errorMessage;
+        } else {
+          const text = await response.text();
+          console.error("Server error (non-JSON):", text);
+          errorMessage = `Erro do servidor (${response.status}). Verifique os logs do Railway.`;
         }
         throw new Error(errorMessage);
       }

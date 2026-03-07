@@ -111,24 +111,23 @@ async function startServer() {
       }
 
       let apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey || apiKey === "MY_GEMINI_API_KEY") {
-        if (process.env.CHAVE_TESTE && process.env.CHAVE_TESTE !== "") {
-          apiKey = process.env.CHAVE_TESTE;
-        }
-      }
       
-      if (!apiKey || apiKey === "MY_GEMINI_API_KEY") {
+      if (!apiKey || apiKey === "" || apiKey.includes("YOUR_API_KEY")) {
+        console.error("GEMINI_API_KEY is missing or invalid in environment variables");
         return res.status(500).json({ 
-          error: "A chave API não foi encontrada. Por favor, configure GEMINI_API_KEY ou CHAVE_TESTE nos Secrets." 
+          error: "Chave da API Gemini (GEMINI_API_KEY) não configurada no Railway. Por favor, adicione-a nas variáveis de ambiente do seu projeto Railway." 
         });
       }
 
       const ai = new GoogleGenAI({ apiKey });
       const base64Data = req.file.buffer.toString("base64");
 
-      const modelNames = ["gemini-3-flash-preview", "gemini-2.0-flash-exp", "gemini-1.5-flash"];
+      // Use standard public model names first for better compatibility
+      const modelNames = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash-exp"];
       let response;
-      let lastError;
+      let lastError: any;
+
+      console.log("Starting PDF processing with Gemini...");
 
       for (const modelName of modelNames) {
         try {
@@ -178,19 +177,27 @@ async function startServer() {
               },
             },
           });
-          if (response) break;
+          if (response) {
+            console.log(`Success with model: ${modelName}`);
+            break;
+          }
         } catch (err: any) {
           console.error(`Model ${modelName} failed:`, err.message);
           lastError = err;
-          if (err.message.includes("404")) continue;
-          throw err; // If it's not a 404 (like a 429 or 503), we might want to stop or handle differently
+          // Continue to next model if it's a 404 or 400 (unsupported)
+          if (err.message.includes("404") || err.message.includes("400")) continue;
+          break; // Stop for other errors like 429 (quota) or 401 (invalid key)
         }
       }
 
-      if (!response) throw lastError || new Error("Nenhum modelo disponível conseguiu processar a fatura.");
+      if (!response) {
+        const errorMsg = lastError?.message || "Erro desconhecido na API Gemini";
+        console.error("All models failed. Last error:", errorMsg);
+        return res.status(500).json({ error: `Falha na IA: ${errorMsg}` });
+      }
 
       const extractedText = response.text || "{}";
-      console.log("Raw Gemini response:", extractedText);
+      console.log("Gemini response received.");
       
       let extractedData;
       try {
