@@ -154,27 +154,30 @@ async function startServer() {
             config: {
               responseMimeType: "application/json",
               responseSchema: {
-                type: Type.OBJECT,
-                properties: {
-                  customer_name: { type: Type.STRING },
-                  uc_number: { type: Type.STRING },
-                  reference_month: { type: Type.STRING },
-                  due_date: { type: Type.STRING },
-                  total_amount: { type: Type.NUMBER },
-                  energy_consumption: { type: Type.NUMBER },
-                  items_detail: {
-                    type: Type.ARRAY,
-                    items: {
-                      type: Type.OBJECT,
-                      properties: {
-                        description: { type: Type.STRING },
-                        value: { type: Type.NUMBER }
-                      },
-                      required: ["description", "value"]
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    customer_name: { type: Type.STRING },
+                    uc_number: { type: Type.STRING },
+                    reference_month: { type: Type.STRING },
+                    due_date: { type: Type.STRING },
+                    total_amount: { type: Type.NUMBER },
+                    energy_consumption: { type: Type.NUMBER },
+                    items_detail: {
+                      type: Type.ARRAY,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          description: { type: Type.STRING },
+                          value: { type: Type.NUMBER }
+                        },
+                        required: ["description", "value"]
+                      }
                     }
-                  }
-                },
-                required: ["uc_number", "due_date", "items_detail"],
+                  },
+                  required: ["uc_number", "due_date", "items_detail"],
+                }
               },
             },
           });
@@ -198,14 +201,18 @@ async function startServer() {
 
       if (!response) throw lastError || new Error("Nenhum modelo disponível conseguiu processar a fatura.");
 
-      const extractedText = response.text || "{}";
+      const extractedText = response.text || "[]";
       console.log("Raw Gemini response:", extractedText);
       
-      let extractedData;
+      let invoicesData: any[];
       try {
         // Clean up markdown if present
         const cleanJson = extractedText.replace(/```json\n?|\n?```/g, "").trim();
-        extractedData = JSON.parse(cleanJson);
+        invoicesData = JSON.parse(cleanJson);
+        // Ensure it's an array even if Gemini returned a single object
+        if (!Array.isArray(invoicesData)) {
+          invoicesData = [invoicesData];
+        }
       } catch (parseError) {
         console.error("Failed to parse Gemini response as JSON:", extractedText);
         throw new Error("A inteligência artificial retornou um formato inválido. Por favor, tente novamente.");
@@ -218,18 +225,22 @@ async function startServer() {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
-      const result = stmt.run(
-        extractedData.customer_name || "Cliente não identificado",
-        extractedData.uc_number,
-        extractedData.reference_month || "",
-        extractedData.due_date,
-        extractedData.total_amount || 0,
-        extractedData.energy_consumption || 0,
-        JSON.stringify(extractedData.items_detail || []),
-        JSON.stringify(extractedData)
-      );
+      const insertedIds = [];
+      for (const data of invoicesData) {
+        const result = stmt.run(
+          data.customer_name || "Cliente não identificado",
+          data.uc_number || "N/A",
+          data.reference_month || "",
+          data.due_date || "",
+          data.total_amount || 0,
+          data.energy_consumption || 0,
+          JSON.stringify(data.items_detail || []),
+          JSON.stringify(data)
+        );
+        insertedIds.push(result.lastInsertRowid);
+      }
 
-      res.json({ id: result.lastInsertRowid, ...extractedData });
+      res.json({ success: true, count: insertedIds.length, ids: insertedIds });
     } catch (error: any) {
       console.error("Error processing PDF:", error);
       let errorMessage = error.message;
