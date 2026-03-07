@@ -55,24 +55,18 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      // Robust health check
+      // First, check if the server is actually responding to API calls
+      // Use cache-buster to ensure we're not getting a cached 404/503
       const pingRes = await fetch(`/api/ping?t=${Date.now()}`);
-      const pingContentType = pingRes.headers.get("content-type");
-      
-      if (!pingRes.ok || !pingContentType || !pingContentType.includes("application/json")) {
-        if (retryCount < 2) {
-          console.log(`Server warming up (Ping: ${pingRes.status}), retrying in 2s...`);
-          await new Promise(r => setTimeout(r, 2000));
-          return fetchInvoices(retryCount + 1);
-        }
-        throw new Error(`O servidor não está pronto (Status: ${pingRes.status}). Se você acabou de fazer deploy, aguarde 30 segundos.`);
+      if (!pingRes.ok) {
+        throw new Error(`O servidor não está respondendo corretamente (Ping falhou: ${pingRes.status}).`);
       }
 
       const response = await fetch(`/api/invoices?t=${Date.now()}`);
       const contentType = response.headers.get("content-type");
       
       if (!response.ok) {
-        let errorMessage = `Erro ${response.status}`;
+        let errorMessage = `Erro do servidor: ${response.status}`;
         if (contentType && contentType.includes("application/json")) {
           const errData = await response.json();
           errorMessage = errData.error || errorMessage;
@@ -81,14 +75,20 @@ export default function App() {
       }
 
       if (!contentType || !contentType.includes("application/json")) {
-        throw new Error("Resposta inválida do servidor (HTML). Verifique se a URL da API está correta.");
+        // If we get HTML, maybe the server is still starting. Retry once after 2 seconds.
+        if (retryCount < 1) {
+          console.log("Got HTML instead of JSON, retrying in 2s...");
+          await new Promise(r => setTimeout(r, 2000));
+          return fetchInvoices(retryCount + 1);
+        }
+        throw new Error("O servidor retornou uma resposta inválida (HTML em vez de JSON). Isso acontece quando o servidor falha ao iniciar ou a rota não é encontrada. Por favor, clique no botão 'Recarregar' abaixo.");
       }
       
       const data = await response.json();
       setInvoices(data);
     } catch (err: any) {
       console.error("Fetch error:", err);
-      setError(err.message);
+      setError('Falha ao carregar faturas: ' + err.message);
     } finally {
       setLoading(false);
     }
@@ -120,10 +120,6 @@ export default function App() {
         if (contentType && contentType.includes("application/json")) {
           const errData = await response.json();
           errorMessage = errData.error || errorMessage;
-        } else {
-          const text = await response.text();
-          console.error("Server error (non-JSON):", text);
-          errorMessage = `Erro do servidor (${response.status}). Verifique os logs do Railway.`;
         }
         throw new Error(errorMessage);
       }

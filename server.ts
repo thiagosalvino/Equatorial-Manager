@@ -18,121 +18,139 @@ process.on("uncaughtException", (err) => {
   console.error("Uncaught Exception:", err);
 });
 
+let db: any;
+try {
+  const dbPath = process.env.DATABASE_URL || "invoices.db";
+  const dbDir = path.dirname(dbPath);
+
+  // Ensure the directory exists if it's not the current one
+  if (dbDir !== "." && !fs.existsSync(dbDir)) {
+    try {
+      fs.mkdirSync(dbDir, { recursive: true });
+      console.log(`Created database directory: ${dbDir}`);
+    } catch (err) {
+      console.error(`Failed to create database directory ${dbDir}:`, err);
+    }
+  }
+
+  console.log(`Initializing database at: ${dbPath}`);
+  db = new Database(dbPath);
+  // Initialize DB
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS invoices (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_name TEXT,
+      uc_number TEXT,
+      reference_month TEXT,
+      due_date TEXT,
+      total_amount REAL,
+      energy_consumption REAL,
+      items_detail TEXT,
+      raw_json TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  
+  // Ensure items_detail column exists (for existing databases)
+  try {
+    db.exec("ALTER TABLE invoices ADD COLUMN items_detail TEXT");
+  } catch (e) {
+    // Column likely already exists
+  }
+  
+  console.log("Database initialized successfully.");
+} catch (err) {
+  console.error("Failed to initialize database:", err);
+  // Fallback to in-memory or just handle the error in routes
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // Database initialization inside startServer
-  let db: any;
-  try {
-    const dbPath = process.env.DATABASE_URL || "invoices.db";
-    const dbDir = path.dirname(dbPath);
-
-    if (dbDir !== "." && !fs.existsSync(dbDir)) {
-      fs.mkdirSync(dbDir, { recursive: true });
-      console.log(`Created database directory: ${dbDir}`);
-    }
-
-    console.log(`Initializing database at: ${dbPath}`);
-    db = new Database(dbPath);
-    
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS invoices (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        customer_name TEXT,
-        uc_number TEXT,
-        reference_month TEXT,
-        due_date TEXT,
-        total_amount REAL,
-        energy_consumption REAL,
-        items_detail TEXT,
-        raw_json TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-    
-    try {
-      db.exec("ALTER TABLE invoices ADD COLUMN items_detail TEXT");
-    } catch (e) {}
-    
-    console.log("Database initialized successfully.");
-  } catch (err) {
-    console.error("CRITICAL: Failed to initialize database:", err);
-  }
-
   // Request logging middleware
   app.use((req, res, next) => {
-    const start = Date.now();
-    res.on('finish', () => {
-      const duration = Date.now() - start;
-      console.log(`${new Date().toISOString()} - ${req.method} ${req.url} - ${res.statusCode} - ${duration}ms`);
-    });
+    console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
     next();
   });
 
   app.use(express.json());
-  app.use(express.urlencoded({ extended: true }));
 
   const upload = multer({ storage: multer.memoryStorage() });
 
-  // API Router
-  const apiRouter = express.Router();
-
-  apiRouter.get("/ping", (req, res) => {
-    res.json({ 
-      status: "pong", 
-      timestamp: new Date().toISOString(), 
-      env: process.env.NODE_ENV,
-      db_ok: !!db 
-    });
+  // API Routes - MOVED BEFORE VITE MIDDLEWARE
+  app.get(["/api/ping", "/api/ping/"], (req, res) => {
+    res.json({ status: "pong", timestamp: new Date().toISOString(), env: process.env.NODE_ENV });
   });
 
-  apiRouter.get("/invoices", (req, res) => {
+  app.get(["/api/invoices", "/api/invoices/"], (req, res) => {
+    console.log("Fetching invoices...");
     try {
       if (!db) {
-        return res.status(500).json({ error: "Banco de dados não inicializado." });
+        console.error("Database not initialized");
+        return res.status(500).json({ error: "Banco de dados não inicializado no servidor." });
       }
       const invoices = db.prepare("SELECT * FROM invoices ORDER BY created_at DESC").all();
+      // Parse items_detail if it exists
       const parsedInvoices = invoices.map((inv: any) => ({
         ...inv,
         items_detail: inv.items_detail ? JSON.parse(inv.items_detail) : []
       }));
+      console.log(`Found ${parsedInvoices.length} invoices`);
       res.json(parsedInvoices);
     } catch (error: any) {
-      console.error("Database error:", error);
-      res.status(500).json({ error: "Erro ao buscar faturas: " + error.message });
+      console.error("Database error fetching invoices:", error);
+      res.status(500).json({ error: "Erro ao acessar o banco de dados: " + error.message });
     }
   });
 
-  apiRouter.post("/upload", upload.single("pdf"), async (req, res) => {
+  app.post(["/api/upload", "/api/upload/"], upload.single("pdf"), async (req, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ error: "Nenhum arquivo enviado." });
       }
 
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey || apiKey === "" || apiKey.includes("YOUR_API_KEY")) {
-        return res.status(500).json({ error: "Configuração ausente: GEMINI_API_KEY não encontrada." });
+      let apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey || apiKey === "MY_GEMINI_API_KEY") {
+        if (process.env.CHAVE_TESTE && process.env.CHAVE_TESTE !== "") {
+          apiKey = process.env.CHAVE_TESTE;
+        }
+      }
+      
+      if (!apiKey || apiKey === "MY_GEMINI_API_KEY") {
+        return res.status(500).json({ 
+          error: "A chave API não foi encontrada. Por favor, configure GEMINI_API_KEY ou CHAVE_TESTE nos Secrets." 
+        });
       }
 
       const ai = new GoogleGenAI({ apiKey });
       const base64Data = req.file.buffer.toString("base64");
 
-      const modelNames = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash-exp"];
+      const modelNames = ["gemini-3-flash-preview", "gemini-2.0-flash-exp", "gemini-1.5-flash"];
       let response;
-      let lastError: any;
+      let lastError;
 
       for (const modelName of modelNames) {
         try {
+          console.log(`Trying model: ${modelName}`);
           response = await ai.models.generateContent({
             model: modelName,
-            contents: [{
-              role: "user",
-              parts: [
-                { inlineData: { data: base64Data, mimeType: "application/pdf" } },
-                { text: "Extraia os dados desta fatura Equatorial. Retorne JSON com: customer_name, uc_number, reference_month, due_date, total_amount, energy_consumption, items_detail (array de {description, value})." }
-              ]
-            }],
+            contents: [
+              {
+                role: "user",
+                parts: [
+                  {
+                    inlineData: {
+                      data: base64Data,
+                      mimeType: "application/pdf",
+                    },
+                  },
+                  {
+                    text: "Extraia os dados desta fatura Equatorial. Foque em: Unidade Consumidora (uc_number), Data de Vencimento (due_date), e o detalhamento de itens da fatura (descrição e valor). Retorne um JSON estruturado com os campos: customer_name, uc_number, reference_month, due_date, total_amount, energy_consumption e items_detail (array de objetos com description e value).",
+                  },
+                ],
+              },
+            ],
             config: {
               responseMimeType: "application/json",
               responseSchema: {
@@ -157,25 +175,34 @@ async function startServer() {
                   }
                 },
                 required: ["uc_number", "due_date", "items_detail"],
-              }
-            }
+              },
+            },
           });
           if (response) break;
         } catch (err: any) {
+          console.error(`Model ${modelName} failed:`, err.message);
           lastError = err;
-          if (err.message.includes("404") || err.message.includes("400")) continue;
-          break;
+          if (err.message.includes("404")) continue;
+          throw err; // If it's not a 404 (like a 429 or 503), we might want to stop or handle differently
         }
       }
 
-      if (!response) {
-        return res.status(500).json({ error: "Falha na IA: " + (lastError?.message || "Erro desconhecido") });
+      if (!response) throw lastError || new Error("Nenhum modelo disponível conseguiu processar a fatura.");
+
+      const extractedText = response.text || "{}";
+      console.log("Raw Gemini response:", extractedText);
+      
+      let extractedData;
+      try {
+        // Clean up markdown if present
+        const cleanJson = extractedText.replace(/```json\n?|\n?```/g, "").trim();
+        extractedData = JSON.parse(cleanJson);
+      } catch (parseError) {
+        console.error("Failed to parse Gemini response as JSON:", extractedText);
+        throw new Error("A inteligência artificial retornou um formato inválido. Por favor, tente novamente.");
       }
 
-      const cleanJson = (response.text || "{}").replace(/```json\n?|\n?```/g, "").trim();
-      const extractedData = JSON.parse(cleanJson);
-
-      if (!db) throw new Error("DB não disponível.");
+      if (!db) throw new Error("Banco de dados não disponível.");
 
       const stmt = db.prepare(`
         INSERT INTO invoices (customer_name, uc_number, reference_month, due_date, total_amount, energy_consumption, items_detail, raw_json)
@@ -183,7 +210,7 @@ async function startServer() {
       `);
 
       const result = stmt.run(
-        extractedData.customer_name || "Cliente",
+        extractedData.customer_name || "Cliente não identificado",
         extractedData.uc_number,
         extractedData.reference_month || "",
         extractedData.due_date,
@@ -195,27 +222,28 @@ async function startServer() {
 
       res.json({ id: result.lastInsertRowid, ...extractedData });
     } catch (error: any) {
-      console.error("Upload error:", error);
-      res.status(500).json({ error: error.message });
+      console.error("Error processing PDF:", error);
+      let errorMessage = error.message;
+      if (errorMessage.includes("429")) errorMessage = "Limite de uso atingido. Aguarde 1 minuto.";
+      if (errorMessage.includes("503")) errorMessage = "Serviço temporariamente indisponível. Tente novamente em instantes.";
+      res.status(500).json({ error: errorMessage });
     }
   });
 
-  apiRouter.delete("/invoices/:id", (req, res) => {
+  app.delete("/api/invoices/:id", (req, res) => {
     try {
-      if (!db) throw new Error("DB não disponível.");
-      db.prepare("DELETE FROM invoices WHERE id = ?").run(req.params.id);
+      if (!db) throw new Error("Banco de dados não disponível.");
+      const { id } = req.params;
+      db.prepare("DELETE FROM invoices WHERE id = ?").run(id);
       res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  // Mount API router
-  app.use("/api", apiRouter);
-
-  // API 404 handler
+  // API 404 handler - ensures /api/* always returns JSON
   app.use("/api/*", (req, res) => {
-    res.status(404).json({ error: `API endpoint not found: ${req.method} ${req.originalUrl}` });
+    res.status(404).json({ error: `Rota de API não encontrada: ${req.method} ${req.originalUrl}` });
   });
 
   // Vite middleware for development
