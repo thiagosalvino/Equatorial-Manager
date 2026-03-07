@@ -1,0 +1,5 @@
+{
+  "name": "Equatorial Invoice Manager",
+  "description": "Sistema moderno para importação e gestão de faturas de energia da Equatorial via leitura de PDF com IA.",
+  "requestFramePermissions": []
+}
