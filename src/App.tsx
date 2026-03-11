@@ -706,6 +706,7 @@ export default function App() {
                     value={new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(dashboardSummary.count > 0 ? dashboardSummary.total / dashboardSummary.count : 0)} 
                     icon={<FileText className="text-blue-500" />} 
                     trend="Valor Médio" 
+                    comingSoon={true}
                   />
                 </div>
                 
@@ -750,60 +751,26 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-col">
+                  <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-col relative overflow-hidden">
                     <div className="flex items-center justify-between mb-8">
                       <h4 className="text-xs font-black text-slate-900 uppercase tracking-[0.2em]">Distribuição de Custos</h4>
                       <div className="h-px flex-1 bg-slate-100 mx-6" />
                     </div>
                     
-                    <div className="flex-1 flex items-center justify-center">
-                      {dashboardSummary.items.length > 0 ? (
-                        <div className="relative w-64 h-64">
-                          {/* Simple CSS-based donut chart representation */}
-                          <div className="absolute inset-0 rounded-full border-[16px] border-slate-50" />
-                          <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total</p>
-                            <p className="text-xl font-black text-slate-900">
-                              {new Intl.NumberFormat('pt-BR', { notation: 'compact' }).format(dashboardSummary.total)}
-                            </p>
-                          </div>
-                          {/* We could use a library like Recharts here, but for a quick visual representation we'll use a placeholder or simple SVG */}
-                          <svg className="w-full h-full -rotate-90" viewBox="0 0 100 100">
-                            <circle
-                              cx="50"
-                              cy="50"
-                              r="42"
-                              fill="transparent"
-                              stroke="currentColor"
-                              strokeWidth="16"
-                              className="text-emerald-500"
-                              strokeDasharray={`${(dashboardSummary.items[0]?.value / dashboardSummary.total) * 263.89} 263.89`}
-                            />
-                          </svg>
+                    <div className="flex-1 flex flex-col items-center justify-center text-center p-12">
+                      <div className="w-20 h-20 bg-slate-50 rounded-[2rem] flex items-center justify-center mb-6 relative">
+                        <LayoutDashboard className="w-10 h-10 text-slate-300" />
+                        <div className="absolute -top-1 -right-1 w-6 h-6 bg-amber-500 rounded-full flex items-center justify-center border-4 border-white">
+                          <Settings className="w-3 h-3 text-white animate-spin-slow" />
                         </div>
-                      ) : (
-                        <div className="text-center text-slate-400">
-                          <LayoutDashboard className="w-16 h-16 mx-auto mb-4 opacity-10" />
-                          <p className="font-medium">Aguardando dados...</p>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="mt-8 space-y-3">
-                      {dashboardSummary.items.slice(0, 4).map((item, idx) => (
-                        <div key={item.description} className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <div className={cn(
-                              "w-2 h-2 rounded-full",
-                              idx === 0 ? "bg-emerald-500" : 
-                              idx === 1 ? "bg-blue-500" : 
-                              idx === 2 ? "bg-amber-500" : "bg-slate-300"
-                            )} />
-                            <span className="text-[10px] font-bold text-slate-600 uppercase truncate max-w-[150px]">{item.description}</span>
-                          </div>
-                          <span className="text-[10px] font-black text-slate-900">{((item.value / dashboardSummary.total) * 100).toFixed(1)}%</span>
-                        </div>
-                      ))}
+                      </div>
+                      <h5 className="text-lg font-black text-slate-900 mb-2 tracking-tight">Em Breve</h5>
+                      <p className="text-sm text-slate-500 max-w-[240px] leading-relaxed font-medium">
+                        Estamos ajustando as informações necessárias para disponibilizar novos gráficos detalhados.
+                      </p>
+                      <div className="mt-8 px-4 py-2 bg-slate-100 rounded-xl text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                        Aguardando Levantamento
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1879,14 +1846,25 @@ function SidebarItem({ icon, label, active = false, collapsed = false, onClick }
   );
 }
 
-function StatCard({ title, value, icon, trend }: { title: string, value: string, icon: React.ReactNode, trend: string }) {
+function StatCard({ title, value, icon, trend, comingSoon }: { title: string, value: string, icon: React.ReactNode, trend: string, comingSoon?: boolean }) {
   const isPositive = trend.startsWith('+');
   const isNegative = trend.startsWith('-');
   const isNeutral = !isPositive && !isNegative;
 
   return (
-    <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-      <div className="flex justify-between items-start mb-4">
+    <div className={cn(
+      "bg-white p-6 rounded-3xl border border-slate-200 shadow-sm relative overflow-hidden",
+      comingSoon && "bg-slate-50/50"
+    )}>
+      {comingSoon && (
+        <div className="absolute inset-0 z-10 bg-white/40 backdrop-blur-[1px] flex items-center justify-center p-4">
+          <div className="bg-slate-900/90 text-white px-4 py-2 rounded-2xl shadow-xl flex items-center gap-2 transform -rotate-2">
+            <Settings className="w-4 h-4 animate-spin-slow" />
+            <span className="text-[10px] font-black uppercase tracking-[0.2em]">Em Breve</span>
+          </div>
+        </div>
+      )}
+      <div className={cn("flex justify-between items-start mb-4", comingSoon && "opacity-20 grayscale")}>
         <div className="p-3 bg-slate-50 rounded-2xl">
           {icon}
         </div>
@@ -1899,8 +1877,10 @@ function StatCard({ title, value, icon, trend }: { title: string, value: string,
           {trend}
         </span>
       </div>
-      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">{title}</p>
-      <h3 className="text-2xl font-black text-slate-900 tracking-tighter">{value}</h3>
+      <div className={comingSoon ? "opacity-20 grayscale" : ""}>
+        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">{title}</p>
+        <h3 className="text-2xl font-black text-slate-900 tracking-tighter">{value}</h3>
+      </div>
     </div>
   );
 }
