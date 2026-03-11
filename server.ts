@@ -2,6 +2,7 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import Database from "better-sqlite3";
 import multer from "multer";
+import pdf from "pdf-parse-fork";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import path from "path";
@@ -35,33 +36,59 @@ try {
 
   console.log(`Initializing database at: ${dbPath}`);
   db = new Database(dbPath);
+  
+  // Enable foreign keys
+  db.pragma('foreign_keys = ON');
+
   // Initialize DB
   db.exec(`
+    CREATE TABLE IF NOT EXISTS classifications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      code TEXT,
+      name TEXT NOT NULL,
+      status TEXT DEFAULT 'active',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS borderos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      classification_id INTEGER,
+      reference_month TEXT,
+      status TEXT DEFAULT 'aberto',
+      created_by TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (classification_id) REFERENCES classifications(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS invoices (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      bordero_id INTEGER,
       customer_name TEXT,
       uc_number TEXT,
+      address TEXT,
       reference_month TEXT,
       due_date TEXT,
       total_amount REAL,
       energy_consumption REAL,
       items_detail TEXT,
       raw_json TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (bordero_id) REFERENCES borderos(id) ON DELETE CASCADE
+    );
   `);
   
-  // Ensure items_detail column exists (for existing databases)
-  try {
-    db.exec("ALTER TABLE invoices ADD COLUMN items_detail TEXT");
-  } catch (e) {
-    // Column likely already exists
-  }
+  // Ensure columns exist (for existing databases)
+  try { db.exec("ALTER TABLE classifications ADD COLUMN code TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE borderos ADD COLUMN status TEXT DEFAULT 'aberto'"); } catch (e) {}
+  try { db.exec("ALTER TABLE invoices ADD COLUMN address TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE invoices ADD COLUMN items_detail TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE invoices ADD COLUMN bordero_id INTEGER"); } catch (e) {}
   
   console.log("Database initialized successfully.");
 } catch (err) {
   console.error("Failed to initialize database:", err);
-  // Fallback to in-memory or just handle the error in routes
 }
 
 async function startServer() {
@@ -78,11 +105,135 @@ async function startServer() {
 
   const upload = multer({ storage: multer.memoryStorage() });
 
-  // API Routes - MOVED BEFORE VITE MIDDLEWARE
+  // API Routes
   app.get(["/api/ping", "/api/ping/"], (req, res) => {
     res.json({ status: "pong", timestamp: new Date().toISOString(), env: process.env.NODE_ENV });
   });
 
+  // --- Classifications API ---
+  app.get("/api/classifications", (req, res) => {
+    try {
+      const data = db.prepare("SELECT * FROM classifications ORDER BY name ASC").all();
+      res.json(data);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/classifications", (req, res) => {
+    try {
+      const { code, name, status } = req.body;
+      const result = db.prepare("INSERT INTO classifications (code, name, status) VALUES (?, ?, ?)").run(code, name, status || 'active');
+      res.json({ id: result.lastInsertRowid });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/classifications/:id", (req, res) => {
+    try {
+      const { id } = req.params;
+      const { code, name, status } = req.body;
+      db.prepare("UPDATE classifications SET code = ?, name = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(code, name, status, id);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/classifications/:id", (req, res) => {
+    try {
+      const { id } = req.params;
+      db.prepare("DELETE FROM classifications WHERE id = ?").run(id);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // --- Borderos API ---
+  app.get("/api/borderos", (req, res) => {
+    try {
+      const data = db.prepare(`
+        SELECT b.*, c.name as classification_name, c.code as classification_code
+        FROM borderos b 
+        LEFT JOIN classifications c ON b.classification_id = c.id 
+        ORDER BY b.created_at DESC
+      `).all();
+      res.json(data);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/borderos", (req, res) => {
+    try {
+      const { classification_id, reference_month, created_by } = req.body;
+      const result = db.prepare("INSERT INTO borderos (classification_id, reference_month, created_by, status) VALUES (?, ?, ?, 'aberto')")
+        .run(classification_id, reference_month, created_by || 'Thiago Salvino');
+      res.json({ id: result.lastInsertRowid });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/borderos/:id/finalize", (req, res) => {
+    try {
+      const { id } = req.params;
+      db.prepare("UPDATE borderos SET status = 'finalizado', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/borderos/:id/reopen", (req, res) => {
+    try {
+      const { id } = req.params;
+      db.prepare("UPDATE borderos SET status = 'importado', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/borderos/:id", (req, res) => {
+    try {
+      const { id } = req.params;
+      const { classification_id, reference_month } = req.body;
+      db.prepare("UPDATE borderos SET classification_id = ?, reference_month = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .run(classification_id, reference_month, id);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/borderos/:id", (req, res) => {
+    try {
+      const { id } = req.params;
+      db.prepare("DELETE FROM borderos WHERE id = ?").run(id);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/borderos/:id/invoices", (req, res) => {
+    try {
+      const { id } = req.params;
+      const invoices = db.prepare("SELECT * FROM invoices WHERE bordero_id = ? ORDER BY created_at DESC").all(id);
+      const parsedInvoices = invoices.map((inv: any) => ({
+        ...inv,
+        items_detail: inv.items_detail ? JSON.parse(inv.items_detail) : []
+      }));
+      res.json(parsedInvoices);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // --- Invoices API ---
   app.get(["/api/invoices", "/api/invoices/"], (req, res) => {
     console.log("Fetching invoices...");
     try {
@@ -108,6 +259,23 @@ async function startServer() {
     try {
       if (!req.file) {
         return res.status(400).json({ error: "Nenhum arquivo enviado." });
+      }
+
+      const bordero_id = req.body.bordero_id;
+      if (!bordero_id) {
+        return res.status(400).json({ error: "O ID do borderô é obrigatório para a importação." });
+      }
+
+      // Check page count limit (Max 10 pages)
+      try {
+        const pdfData = await pdf(req.file.buffer);
+        if (pdfData.numpages > 10) {
+          return res.status(400).json({ 
+            error: `Limite de páginas excedido. O arquivo possui ${pdfData.numpages} páginas, mas o limite máximo permitido para importação é de 10 páginas por arquivo.` 
+          });
+        }
+      } catch (pdfError) {
+        console.warn("Could not determine PDF page count, proceeding with upload:", pdfError);
       }
 
       let apiKey = process.env.GEMINI_API_KEY;
@@ -146,7 +314,7 @@ async function startServer() {
                     },
                   },
                   {
-                    text: "Extraia os dados desta fatura Equatorial. Foque em: Unidade Consumidora (uc_number), Data de Vencimento (due_date), e o detalhamento de itens da fatura (descrição e valor). Retorne um JSON estruturado com os campos: customer_name, uc_number, reference_month, due_date, total_amount, energy_consumption e items_detail (array de objetos com description e value).",
+                    text: "Este arquivo PDF pode conter múltiplas faturas (uma por página). Por favor, extraia os dados de TODAS as faturas presentes no arquivo (até 10 faturas). Para cada fatura, identifique: Unidade Consumidora (uc_number), Nome do Cliente (customer_name), Endereço Completo (address), Mês de Referência (reference_month), Data de Vencimento (due_date), Valor Total (total_amount), Consumo de Energia (energy_consumption) e o detalhamento de itens (items_detail). Retorne um ARRAY de objetos JSON, um para cada fatura encontrada.",
                   },
                 ],
               },
@@ -158,19 +326,20 @@ async function startServer() {
                 items: {
                   type: Type.OBJECT,
                   properties: {
-                    customer_name: { type: Type.STRING },
-                    uc_number: { type: Type.STRING },
-                    reference_month: { type: Type.STRING },
-                    due_date: { type: Type.STRING },
-                    total_amount: { type: Type.NUMBER },
-                    energy_consumption: { type: Type.NUMBER },
+                    customer_name: { type: Type.STRING, description: "Nome do cliente na fatura" },
+                    uc_number: { type: Type.STRING, description: "Número da Unidade Consumidora" },
+                    address: { type: Type.STRING, description: "Endereço completo da unidade" },
+                    reference_month: { type: Type.STRING, description: "Mês de referência (ex: MAR/2026)" },
+                    due_date: { type: Type.STRING, description: "Data de vencimento (ex: 15/03/2026)" },
+                    total_amount: { type: Type.NUMBER, description: "Valor total da fatura em R$" },
+                    energy_consumption: { type: Type.NUMBER, description: "Consumo total de energia em kWh" },
                     items_detail: {
                       type: Type.ARRAY,
                       items: {
                         type: Type.OBJECT,
                         properties: {
-                          description: { type: Type.STRING },
-                          value: { type: Type.NUMBER }
+                          description: { type: Type.STRING, description: "Descrição do item cobrado" },
+                          value: { type: Type.NUMBER, description: "Valor do item em R$" }
                         },
                         required: ["description", "value"]
                       }
@@ -221,15 +390,17 @@ async function startServer() {
       if (!db) throw new Error("Banco de dados não disponível.");
 
       const stmt = db.prepare(`
-        INSERT INTO invoices (customer_name, uc_number, reference_month, due_date, total_amount, energy_consumption, items_detail, raw_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO invoices (bordero_id, customer_name, uc_number, address, reference_month, due_date, total_amount, energy_consumption, items_detail, raw_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       const insertedIds = [];
       for (const data of invoicesData) {
         const result = stmt.run(
+          bordero_id,
           data.customer_name || "Cliente não identificado",
           data.uc_number || "N/A",
+          data.address || "",
           data.reference_month || "",
           data.due_date || "",
           data.total_amount || 0,
@@ -239,6 +410,10 @@ async function startServer() {
         );
         insertedIds.push(result.lastInsertRowid);
       }
+
+      // Update bordero status to 'importado' if it was 'aberto'
+      db.prepare("UPDATE borderos SET status = 'importado', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'aberto'")
+        .run(bordero_id);
 
       res.json({ success: true, count: insertedIds.length, ids: insertedIds });
     } catch (error: any) {
@@ -254,7 +429,23 @@ async function startServer() {
     try {
       if (!db) throw new Error("Banco de dados não disponível.");
       const { id } = req.params;
-      db.prepare("DELETE FROM invoices WHERE id = ?").run(id);
+      
+      // Get bordero_id before deleting
+      const invoice = db.prepare("SELECT bordero_id FROM invoices WHERE id = ?").get(id);
+      
+      if (invoice) {
+        db.prepare("DELETE FROM invoices WHERE id = ?").run(id);
+        
+        // Check if there are any invoices left for this bordero
+        const count = db.prepare("SELECT COUNT(*) as total FROM invoices WHERE bordero_id = ?").get(invoice.bordero_id);
+        
+        if (count.total === 0) {
+          // Update status back to 'aberto' if no invoices left
+          db.prepare("UPDATE borderos SET status = 'aberto', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'importado'")
+            .run(invoice.bordero_id);
+        }
+      }
+      
       res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
