@@ -242,6 +242,21 @@ export default function App() {
 
   const [error, setError] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isMobile, setIsMobile] = useState(false);
+
+  // Handle responsive sidebar
+  useEffect(() => {
+    const checkMobile = () => {
+      const mobile = window.innerWidth < 1024;
+      setIsMobile(mobile);
+      if (mobile) setIsSidebarOpen(false);
+      else setIsSidebarOpen(true);
+    };
+    
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -502,6 +517,11 @@ export default function App() {
     fetchBorderoInvoices(bordero.id);
   };
 
+  const handleNavigation = (tab: 'dashboard' | 'bordero' | 'classificacao') => {
+    setActiveTab(tab);
+    if (isMobile) setIsSidebarOpen(false);
+  };
+
   const filteredBorderos = borderos.filter(b => {
     const matchClass = !borderoFilterClassification || b.classification_id === Number(borderoFilterClassification);
     const matchCode = !borderoFilterCode || b.classification_code?.toLowerCase().includes(borderoFilterCode.toLowerCase());
@@ -510,12 +530,39 @@ export default function App() {
   });
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 font-sans flex overflow-hidden">
+    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 font-sans flex overflow-hidden relative">
+      {/* Mobile Menu Toggle Button (Floating Green Icon) */}
+      {isMobile && !isSidebarOpen && (
+        <motion.button
+          initial={{ scale: 0, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          onClick={() => setIsSidebarOpen(true)}
+          className="fixed bottom-6 right-6 z-50 w-14 h-14 bg-emerald-500 text-white rounded-full shadow-2xl flex items-center justify-center hover:bg-emerald-600 transition-colors focus:ring-4 focus:ring-emerald-500/20"
+        >
+          <Menu className="w-6 h-6" />
+        </motion.button>
+      )}
+
+      {/* Backdrop for Mobile */}
+      <AnimatePresence>
+        {isMobile && isSidebarOpen && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setIsSidebarOpen(false)}
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-40 lg:hidden"
+          />
+        )}
+      </AnimatePresence>
+
       {/* Sidebar */}
       <aside 
         className={cn(
-          "bg-slate-900 text-white transition-all duration-300 ease-in-out flex flex-col z-30",
-          isSidebarOpen ? "w-64" : "w-20"
+          "bg-slate-900 text-white transition-all duration-300 ease-in-out flex flex-col z-50",
+          isSidebarOpen ? "w-64" : "w-20",
+          isMobile ? "fixed inset-y-0 left-0 transform" : "relative",
+          isMobile && !isSidebarOpen && "-translate-x-full"
         )}
       >
         <div className="p-6 flex items-center gap-3 border-b border-slate-800/50">
@@ -539,14 +586,14 @@ export default function App() {
             label="Dashboard" 
             active={activeTab === 'dashboard'} 
             collapsed={!isSidebarOpen}
-            onClick={() => setActiveTab('dashboard')}
+            onClick={() => handleNavigation('dashboard')}
           />
           <SidebarItem 
             icon={<ClipboardList className="w-5 h-5" />} 
             label="Borderô a Pagar" 
             active={activeTab === 'bordero'} 
             collapsed={!isSidebarOpen}
-            onClick={() => setActiveTab('bordero')}
+            onClick={() => handleNavigation('bordero')}
           />
 
           <div className="pt-4 pb-2 px-4">
@@ -561,24 +608,26 @@ export default function App() {
             label="Classificação" 
             active={activeTab === 'classificacao'} 
             collapsed={!isSidebarOpen}
-            onClick={() => setActiveTab('classificacao')}
+            onClick={() => handleNavigation('classificacao')}
           />
         </nav>
 
-        <div className="p-4 border-t border-slate-800/50 space-y-2">
-          <SidebarItem 
-            icon={<Settings className="w-5 h-5" />} 
-            label="Configurações" 
-            collapsed={!isSidebarOpen}
-          />
-          <button 
-            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-            className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-slate-800 transition-colors text-slate-400 hover:text-white"
-          >
-            {isSidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-            {isSidebarOpen && <span className="text-sm font-medium">Recolher Menu</span>}
-          </button>
-        </div>
+        {!isMobile && (
+          <div className="p-4 border-t border-slate-800/50 space-y-2">
+            <SidebarItem 
+              icon={<Settings className="w-5 h-5" />} 
+              label="Configurações" 
+              collapsed={!isSidebarOpen}
+            />
+            <button 
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-slate-800 transition-colors text-slate-400 hover:text-white"
+            >
+              {isSidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+              {isSidebarOpen && <span className="text-sm font-medium">Recolher Menu</span>}
+            </button>
+          </div>
+        )}
       </aside>
 
       {/* Main Content Area */}
